@@ -1,2 +1,3 @@
-# ecwide
-This is the source code of ECWide described in our paper presented in USENIX FAST'21.
+# Exploiting Combined Locality forWide-Stripe Erasure Coding in Distributed Storage
+
+We implement two ECWide prototypes called ECWide-C and ECWide-H for cold and hot storage respectively.
