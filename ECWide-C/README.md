@@ -102,6 +102,12 @@ ECWide-C Installation
   $  python3 util/cloud_exp.py update [all/config/program] n
   ```
 
+- Use `dd` to generate a random block in all `data_nodes` to test.
+
+  ```bash
+  $  dd if=/dev/urandom of=test/stdfile bs=1M count=64
+  ```
+
 - To run the experiment, users should run the `master_node` ,
 
   ```bash
