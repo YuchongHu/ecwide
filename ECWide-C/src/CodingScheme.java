@@ -15,33 +15,53 @@ public class CodingScheme {
   int groupDataNum;
   int groupNum;
   int globalParityNum;
+  int rackNum;
   int rackNodesNum;
 
-  public CodingScheme(int k, int m, int chunkSize) {
-    codeType = CodeType.RS;
+  // for basic-RS/TL
+  public CodingScheme(int k, int m, int chunkSize, boolean isTl) {
+    codeType = isTl ? CodeType.TL : CodeType.RS;
     this.k = k;
-    this.m = m;
+    globalParityNum = this.m = m;
     this.chunkSize = chunkSize;
+    if (isTl) {
+      rackNum = (int) Math.ceil((double) k / m) + 1;
+      rackNodesNum = m;
+    }
   }
 
-  public CodingScheme(int groupDataNum, int groupNum, int globalParityNum, int rackNodesNum, int chunkSize,
-      CodeType codeType) {
+  // for LRC/CL
+  public CodingScheme(int k, int m, int groupDataNum, int chunkSize, boolean isCl) {
+    this.k = k;
+    globalParityNum = this.m = m;
+    this.chunkSize = chunkSize;
     this.groupDataNum = groupDataNum;
-    this.groupNum = groupNum;
-    this.globalParityNum = globalParityNum;
-    this.chunkSize = chunkSize;
-    this.rackNodesNum = rackNodesNum;
-    // every group contains a local parity for LRC and CL
-    this.codeType = codeType; // zero means no racks, LRC
+    groupNum = (int) Math.ceil((double) k / groupDataNum);
+    if (isCl) {
+      codeType = CodeType.CL;
+      rackNodesNum = m + 1;
+      rackNum = (int) Math.ceil((k + groupNum) / (double) rackNodesNum) + 1;
+    } else {
+      codeType = CodeType.LRC;
+      rackNodesNum = rackNum = -1;
+    }
   }
 
-  public void setK(int k) {
-    this.k = k;
+  public static CodingScheme getRsScheme(int k, int m, int chunkSize) {
+    return new CodingScheme(k, m, chunkSize, false);
   }
 
-  // public static Codingscheme getToy() {
-  // return new Codingscheme(2, 2, 1, 2, 1 << 10, CodeType.CL);
-  // }
+  public static CodingScheme getTlScheme(int k, int m, int chunkSize) {
+    return new CodingScheme(k, m, chunkSize, true);
+  }
+
+  public static CodingScheme getLrcScheme(int k, int m, int groupDataNum, int chunkSize) {
+    return new CodingScheme(k, m, groupDataNum, chunkSize, false);
+  }
+
+  public static CodingScheme getClScheme(int k, int m, int groupDataNum, int chunkSize) {
+    return new CodingScheme(k, m, groupDataNum, chunkSize, true);
+  }
 
   public static CodingScheme getFromConfig(String src) {
     try {
@@ -68,19 +88,24 @@ public class CodingScheme {
         }
         map.put(keyTmp, Integer.parseInt(valueTmp));
       }
-      final int groupDataNum = map.get("groupDataNum");
-      final int groupNum = map.get("groupNum");
-      final int globalParityNum = map.get("globalParityNum");
-      final int rackNodesNum = map.get("rackNodesNum");
-      final int chunkSizeBits = map.get("chunkSizeBits");
       final int k = map.get("k");
+      final int chunkSizeBits = map.get("chunkSizeBits");
       final int chunkSize = 1 << chunkSizeBits;
-      CodingScheme tmpscheme = new CodingScheme(groupDataNum, groupNum, globalParityNum, rackNodesNum, chunkSize,
-          codeType);
-      if (k != 0) {
-        tmpscheme.setK(k);
+      final int globalParityNum = map.get("globalParityNum");
+      final int groupDataNum = codeType == CodeType.TL || codeType == CodeType.RS ? -1 : map.get("groupDataNum");
+      // final int groupNum = codeType == CodeType.TL ? -1 : map.get("groupNum");
+      // final int rackNodesNum = codeType == CodeType.LRC ? -1 :
+      // map.get("rackNodesNum");
+      // final int rackNum = codeType == CodeType.LRC ? groupNum : map.get("rackNum");
+      if (codeType == CodeType.RS) {
+        return CodingScheme.getRsScheme(k, globalParityNum, chunkSize);
+      } else if (codeType == CodeType.TL) {
+        return CodingScheme.getTlScheme(k, globalParityNum, chunkSize);
+      } else if (codeType == CodeType.LRC) {
+        return CodingScheme.getLrcScheme(k, globalParityNum, groupDataNum, chunkSize);
+      } else {
+        return CodingScheme.getClScheme(k, globalParityNum, groupDataNum, chunkSize);
       }
-      return tmpscheme;
     } catch (IOException e) {
       e.printStackTrace();
     }

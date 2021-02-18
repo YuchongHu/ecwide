@@ -34,7 +34,7 @@ public class ServerInfo {
     try {
       lines = Files.readAllLines(Paths.get(src));
       if (lines.get(0).equals("127.0.0.1") || lines.get(0).equals("localhost")) {
-        int num = Integer.parseInt(lines.get(1));
+        int num = Integer.parseInt(lines.get(1).trim());
         for (int i = 0; i < num; ++i) {
           infos.add(new ServerInfo("localhost", port + i));
         }

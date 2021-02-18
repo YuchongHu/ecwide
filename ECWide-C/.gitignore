@@ -8,3 +8,6 @@ test/stdfile
 test/large_file
 build/**
 test/xlarge_file
+test/chunks
+.vscode
+lib/*

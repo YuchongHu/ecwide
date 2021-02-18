@@ -3,14 +3,14 @@
 #include <jni.h>
 #include <sys/time.h>
 
+#include <cstring>
 #include <iostream>
-#include <thread>
 
 #include "isa-l.h"
 using namespace std;
 
-JNIEXPORT void JNICALL Java_NativeCodec_generateEncodeMatrix__(JNIEnv* env,
-                                                               jobject obj) {
+JNIEXPORT void JNICALL Java_NativeCodec_generateEncodeMatrix(JNIEnv* env,
+                                                             jobject obj) {
   // get class
   jclass class_codec = env->GetObjectClass(obj);
   // get encode matrix
@@ -19,13 +19,48 @@ JNIEXPORT void JNICALL Java_NativeCodec_generateEncodeMatrix__(JNIEnv* env,
   jobject jba_matrix = (jobject)env->GetObjectField(obj, fid_matrix);
   uint8_t* matrix = (uint8_t*)env->GetDirectBufferAddress(jba_matrix);
   // get k & n
-  jfieldID fid_k = env->GetFieldID(class_codec, "k", "I");
+  jfieldID fid_k = env->GetFieldID(class_codec, "encodeDataNum", "I");
   jint k = env->GetIntField(obj, fid_k);
-  jfieldID fid_n = env->GetFieldID(class_codec, "n", "I");
-  jint n = env->GetIntField(obj, fid_n);
+  jfieldID fid_m = env->GetFieldID(class_codec, "globalNum", "I");
+  jint m = env->GetIntField(obj, fid_m);
+  jint n = m + k;
+  jfieldID fid_ct = env->GetFieldID(class_codec, "codeType", "C");
+  jchar code_type = env->GetIntField(obj, fid_ct);
 
   // generate the whole matrix
-  gf_gen_cauchy1_matrix(matrix, n, k);
+  uint8_t* tmp_matrix = new uint8_t[k * n]();
+  gf_gen_cauchy1_matrix(tmp_matrix, n, k);
+  if (code_type != 'C') {
+    memcpy(matrix, tmp_matrix + k * k, k * m);
+  } else {
+    jfieldID fid_mn = env->GetFieldID(class_codec, "multiNodeEncode", "Z");
+    jboolean multinode = env->GetIntField(obj, fid_mn);
+    if (multinode) {
+      jfieldID fid_ni = env->GetFieldID(class_codec, "nodeIndex", "I");
+      jint node_index = env->GetIntField(obj, fid_ni) - 1;
+      jfieldID fid_gdn = env->GetFieldID(class_codec, "groupDataNum", "I");
+      jint group_data_num = env->GetIntField(obj, fid_gdn);
+      jfieldID fid_edn = env->GetFieldID(class_codec, "encodeDataNum", "I");
+      jint encode_data_num = env->GetIntField(obj, fid_edn);
+      uint8_t* cur_matrix = nullptr;
+      int first_group = (k - 1) % group_data_num + 1;
+      // group take in charge:  data group 1 - l  =>  node l | l-1 | ... | 2 | 1
+      if (node_index) {
+        cur_matrix = tmp_matrix + k * (k + 1) -
+                     (node_index * group_data_num + first_group);
+      } else {
+        cur_matrix = tmp_matrix + k * (k + 1) - first_group;
+      }
+      for (int i = 0, p = 0; i < m; ++i, cur_matrix += k) {
+        for (int j = 0; j < encode_data_num; ++j) {
+          matrix[p++] = cur_matrix[j];
+        }
+      }
+    } else {
+      memcpy(matrix, tmp_matrix + k * k, k * m);
+    }
+  }
+  delete[] tmp_matrix;
 }
 
 JNIEXPORT void JNICALL Java_NativeCodec_initEncodeTable(JNIEnv* env,
@@ -39,20 +74,17 @@ JNIEXPORT void JNICALL Java_NativeCodec_initEncodeTable(JNIEnv* env,
   uint8_t* encode_matrix = (uint8_t*)env->GetDirectBufferAddress(jba_matrix);
   // get gf table
   jfieldID fid_gftbl =
-      env->GetFieldID(class_codec, "gftbl", "Ljava/nio/ByteBuffer;");
+      env->GetFieldID(class_codec, "encodeGftbl", "Ljava/nio/ByteBuffer;");
   jobject jba_gftbl = (jobject)env->GetObjectField(obj, fid_gftbl);
   uint8_t* gftbl = (uint8_t*)env->GetDirectBufferAddress(jba_gftbl);
   // get k & m
-  jfieldID fid_k = env->GetFieldID(class_codec, "k", "I");
+  jfieldID fid_k = env->GetFieldID(class_codec, "encodeDataNum", "I");
   jint k = env->GetIntField(obj, fid_k);
-  jfieldID fid_m = env->GetFieldID(class_codec, "m", "I");
+  jfieldID fid_m = env->GetFieldID(class_codec, "globalNum", "I");
   jint m = env->GetIntField(obj, fid_m);
 
   // call isa-l init table
   ec_init_tables(k, m, encode_matrix, gftbl);
-
-  // // notify the modification and write back
-  // env->ReleaseByteArrayElements(jba_gftbl, (jbyte*)gftbl, 0);
 }
 
 JNIEXPORT void JNICALL Java_NativeCodec_initDecodeTable(JNIEnv* env,
@@ -64,28 +96,42 @@ JNIEXPORT void JNICALL Java_NativeCodec_initDecodeTable(JNIEnv* env,
       env->GetFieldID(class_codec, "decodeGftbl", "Ljava/nio/ByteBuffer;");
   jobject jba_dgftbl = (jobject)env->GetObjectField(obj, fid_dgftbl);
   uint8_t* decode_gftbl = (uint8_t*)env->GetDirectBufferAddress(jba_dgftbl);
-  // get k
-  jfieldID fid_k = env->GetFieldID(class_codec, "k", "I");
-  jint k = env->GetIntField(obj, fid_k);
-
-  // if (decode_gftbl == nullptr) {
-  //   printf("the decode_gftbl is nullptr!\n");
-  // }
-
-  // printf("get member ok\n");
+  // get decode_num
+  jfieldID fid_dn = env->GetFieldID(class_codec, "decodeDataNum", "I");
+  jint decode_num = env->GetIntField(obj, fid_dn);
 
   // all-1 line for xor
-  uint8_t decode_matrix[k];
+  uint8_t decode_matrix[decode_num];
   int i;
-  for (i = 0; i < k; ++i) {
+  for (i = 0; i < decode_num; ++i) {
     decode_matrix[i] = 1;
   }
   // call isa-l to get decode gf table
-  ec_init_tables(k, 1, decode_matrix, decode_gftbl);
+  ec_init_tables(decode_num, 1, decode_matrix, decode_gftbl);
+}
 
-  // // notify the modification and write back
-  // env->ReleaseByteArrayElements(jba_dgftbl, (jbyte*)decode_gftbl, 0);
-  // delete[] decode_matrix;
+JNIEXPORT void JNICALL Java_NativeCodec_initPartialDecodeTable(JNIEnv* env,
+                                                               jobject obj) {
+  // get class
+  jclass class_codec = env->GetObjectClass(obj);
+  // get decode gf table
+  jfieldID fid_pdgftbl = env->GetFieldID(class_codec, "partialDecodeGftbl",
+                                         "Ljava/nio/ByteBuffer;");
+  jobject jba_pdgftbl = (jobject)env->GetObjectField(obj, fid_pdgftbl);
+  uint8_t* partial_decode_gftbl =
+      (uint8_t*)env->GetDirectBufferAddress(jba_pdgftbl);
+  // get partialDecodeNum
+  jfieldID fid_pdn = env->GetFieldID(class_codec, "partialDecodeNum", "I");
+  jint partial_decode_num = env->GetIntField(obj, fid_pdn);
+
+  // all-1 line for xor
+  uint8_t decode_matrix[partial_decode_num];
+  int i;
+  for (i = 0; i < partial_decode_num; ++i) {
+    decode_matrix[i] = 1;
+  }
+  // call isa-l to get partial decode gf table
+  ec_init_tables(partial_decode_num, 1, decode_matrix, partial_decode_gftbl);
 }
 
 JNIEXPORT void JNICALL Java_NativeCodec_encodeData(JNIEnv* env, jobject obj,
@@ -95,53 +141,81 @@ JNIEXPORT void JNICALL Java_NativeCodec_encodeData(JNIEnv* env, jobject obj,
   jclass class_codec = env->GetObjectClass(obj);
   // get gf table
   jfieldID fid_gftbl =
-      env->GetFieldID(class_codec, "gftbl", "Ljava/nio/ByteBuffer;");
+      env->GetFieldID(class_codec, "encodeGftbl", "Ljava/nio/ByteBuffer;");
   jobject jba_gftbl = (jobject)env->GetObjectField(obj, fid_gftbl);
   uint8_t* gftbl = (uint8_t*)env->GetDirectBufferAddress(jba_gftbl);
   // get k & m & chunk_size
-  jfieldID fid_k = env->GetFieldID(class_codec, "k", "I");
+  jfieldID fid_k = env->GetFieldID(class_codec, "encodeDataNum", "I");
   jint k = env->GetIntField(obj, fid_k);
-  jfieldID fid_m = env->GetFieldID(class_codec, "m", "I");
+  jfieldID fid_m = env->GetFieldID(class_codec, "globalNum", "I");
   jint m = env->GetIntField(obj, fid_m);
   jfieldID fid_cs = env->GetFieldID(class_codec, "chunkSize", "I");
   jint chunk_size = env->GetIntField(obj, fid_cs);
+  jfieldID fid_ct = env->GetFieldID(class_codec, "codeType", "C");
+  jchar code_type = env->GetIntField(obj, fid_ct);
   // get the data & parity memory space
   int i;
   jobject jba[k];
-  uint8_t** data = new uint8_t*[k];
+  uint8_t* data[k];
   for (i = 0; i < k; ++i) {
     jba[i] = env->GetObjectArrayElement(data_joa, i);
     data[i] = (uint8_t*)env->GetDirectBufferAddress(jba[i]);
-    if (!data[i]) {
-      printf("data[%d] is null!\n", i);
-    }
   }
-  uint8_t** parity = new uint8_t*[m];
+  uint8_t* parity[k];
   for (i = 0; i < m; ++i) {
     jba[i] = env->GetObjectArrayElement(parity_joa, i);
     parity[i] = (uint8_t*)env->GetDirectBufferAddress(jba[i]);
-    if (!parity[i]) {
-      printf("parity[%d] is null!\n", i);
-    }
   }
-  cout << "--- encode data :";
-  struct timeval start_time, end_time;
-  gettimeofday(&start_time, 0);
-
-  // call isa-l to encode data
+  // call isa-l to encode data to get global parity chunks
   ec_encode_data(chunk_size, k, m, gftbl, data, parity);
 
-  gettimeofday(&end_time, 0);
-  double time = (end_time.tv_sec - start_time.tv_sec) * 1000.0 +
-                (end_time.tv_usec - start_time.tv_usec) / 1000.0;
-  cout << time << " ---\n";
-
-  // // notify the modification and write back
-  // for (i = 0; i < m; ++i) {
-  //   env->ReleaseByteArrayElements(jba[i], (jbyte*)parity[i], 0);
-  // }
-  delete[] data;
-  delete[] parity;
+  // generate local parity chunk
+  if (code_type == 'C' || code_type == 'L') {
+    jfieldID fid_mn = env->GetFieldID(class_codec, "multiNodeEncode", "Z");
+    jboolean multinode = env->GetIntField(obj, fid_mn);
+    jfieldID fid_gdn = env->GetFieldID(class_codec, "groupDataNum", "I");
+    jint group_data_num = env->GetIntField(obj, fid_gdn);
+    static uint8_t* xor_gftbl = nullptr;
+    static uint8_t* last_xor_gftbl = nullptr;
+    static uint8_t* matrix = nullptr;
+    if (!xor_gftbl) {
+      int num = multinode ? k : group_data_num;
+      xor_gftbl = new uint8_t[32 * num]();
+      matrix = new uint8_t[num]();
+      memset(xor_gftbl, 1, num);
+      ec_init_tables(num, 1, matrix, xor_gftbl);
+    }
+    if (code_type == 'C' && multinode) {
+      int pos = m;
+      jba[pos] = env->GetObjectArrayElement(parity_joa, pos);
+      parity[pos] = (uint8_t*)env->GetDirectBufferAddress(jba[pos]);
+      ec_encode_data(chunk_size, k, 1, xor_gftbl, data, parity + m);
+    } else {
+      jfieldID fid_gn = env->GetFieldID(class_codec, "groupNum", "I");
+      jint group_num = env->GetIntField(obj, fid_gn);
+      int pos = m, offset = 0;
+      for (int j = 0; j < group_num - 1; ++j, ++pos, offset += group_data_num) {
+        jba[pos] = env->GetObjectArrayElement(parity_joa, pos);
+        parity[pos] = (uint8_t*)env->GetDirectBufferAddress(jba[pos]);
+        ec_encode_data(chunk_size, group_data_num, 1, xor_gftbl, data + offset,
+                       parity + pos);
+      }
+      // last group
+      jba[pos] = env->GetObjectArrayElement(parity_joa, pos);
+      parity[pos] = (uint8_t*)env->GetDirectBufferAddress(jba[pos]);
+      static int last_group = (k - 1) % group_data_num + 1;
+      if (!last_xor_gftbl) {
+        if (last_group != group_data_num) {
+          last_xor_gftbl = new uint8_t[32 * last_group]();
+          ec_init_tables(last_group, 1, matrix, last_xor_gftbl);
+        } else {
+          last_xor_gftbl = xor_gftbl;
+        }
+      }
+      ec_encode_data(chunk_size, last_group, 1, last_xor_gftbl, data + offset,
+                     parity + pos);
+    }
+  }
 }
 
 JNIEXPORT void JNICALL Java_NativeCodec_decodeData(JNIEnv* env, jobject obj,
@@ -154,77 +228,58 @@ JNIEXPORT void JNICALL Java_NativeCodec_decodeData(JNIEnv* env, jobject obj,
       env->GetFieldID(class_codec, "decodeGftbl", "Ljava/nio/ByteBuffer;");
   jobject jba_dgftbl = (jobject)env->GetObjectField(obj, fid_dgftbl);
   uint8_t* decode_gftbl = (uint8_t*)env->GetDirectBufferAddress(jba_dgftbl);
-  // get k & chunk_size
-  jfieldID fid_k = env->GetFieldID(class_codec, "k", "I");
-  jint k = env->GetIntField(obj, fid_k);
+  // get decode_num & chunk_size
+  jfieldID fid_dn = env->GetFieldID(class_codec, "decodeDataNum", "I");
+  jint decode_num = env->GetIntField(obj, fid_dn);
   jfieldID fid_cs = env->GetFieldID(class_codec, "chunkSize", "I");
   jint chunk_size = env->GetIntField(obj, fid_cs);
   // get the data & target memory space
   int i;
-  jobject jba[k];
-  uint8_t** data = new uint8_t*[k];
-  for (i = 0; i < k; ++i) {
+  jobject jba[decode_num];
+  uint8_t* data[decode_num];
+  for (i = 0; i < decode_num; ++i) {
     jba[i] = env->GetObjectArrayElement(data_joa, i);
     data[i] = (uint8_t*)env->GetDirectBufferAddress(jba[i]);
   }
-  uint8_t** target = new uint8_t*[1];
+  uint8_t* target[1];
   target[0] = (uint8_t*)env->GetDirectBufferAddress(target_jba);
 
   // call isa-l to decode
-  ec_encode_data(chunk_size, k, 1, decode_gftbl, data, target);
-
-  // // notify the modification and write back
-  // env->ReleaseByteArrayElements(target_jba, (jbyte*)target[0], 0);
+  ec_encode_data(chunk_size, decode_num, 1, decode_gftbl, data, target);
 }
 
-JNIEXPORT void JNICALL Java_NativeCodec_generateEncodeMatrix__I(JNIEnv* env,
-                                                                jobject obj,
-                                                                jint index) {
+JNIEXPORT void JNICALL Java_NativeCodec_partialDecodeData(JNIEnv* env,
+                                                          jobject obj,
+                                                          jobjectArray data_joa,
+                                                          jobject target_jba) {
   // get class
   jclass class_codec = env->GetObjectClass(obj);
-  // get encode matrix
-  jfieldID fid_matrix =
-      env->GetFieldID(class_codec, "encodeMatrix", "Ljava/nio/ByteBuffer;");
-  jobject jba_matrix = (jobject)env->GetObjectField(obj, fid_matrix);
-  uint8_t* matrix = (uint8_t*)env->GetDirectBufferAddress(jba_matrix);
-  // get k & n
-  jfieldID fid_k = env->GetFieldID(class_codec, "k", "I");
-  jint k = env->GetIntField(obj, fid_k);
-  jfieldID fid_n = env->GetFieldID(class_codec, "n", "I");
-  jint n = env->GetIntField(obj, fid_n);
-  jfieldID fid_egn = env->GetFieldID(class_codec, "encodeGroupNum", "I");
-  jint encode_group_num = env->GetIntField(obj, fid_egn);
-
-  // generate the whole matrix
-  int real_k = encode_group_num * k, m = n - k, real_n = real_k + m,
-      matrix_len = real_k * real_n;
-  // uint8_t* matrix = new uint8_t[matrix_len];
-  gf_gen_cauchy1_matrix(matrix, real_n, real_k);
-
-  // set the first parity encode line as XOR
-  int i, j;  //, start = real_k * (real_k - 1), end = real_k + start;
-  int matrix_index;
-  for (matrix_index = 0; matrix_index < k; ++matrix_index) {
-    matrix[matrix_index] = 1;
+  // get decode gf table
+  jfieldID fid_pdgftbl = env->GetFieldID(class_codec, "partialDecodeGftbl",
+                                         "Ljava/nio/ByteBuffer;");
+  jobject jba_pdgftbl = (jobject)env->GetObjectField(obj, fid_pdgftbl);
+  uint8_t* partial_decode_gftbl =
+      (uint8_t*)env->GetDirectBufferAddress(jba_pdgftbl);
+  // get decode_num & chunk_size
+  jfieldID fid_pdn = env->GetFieldID(class_codec, "partialDecodeNum", "I");
+  jint partial_decode_num = env->GetIntField(obj, fid_pdn);
+  jfieldID fid_cs = env->GetFieldID(class_codec, "chunkSize", "I");
+  jint chunk_size = env->GetIntField(obj, fid_cs);
+  // get the data & target memory space
+  int i;
+  jobject jba[partial_decode_num];
+  uint8_t* data[partial_decode_num];
+  for (i = 0; i < partial_decode_num; ++i) {
+    jba[i] = env->GetObjectArrayElement(data_joa, i);
+    data[i] = (uint8_t*)env->GetDirectBufferAddress(jba[i]);
   }
-  // reorganize the matrix to store
-  for (i = real_k * real_k + index * k; i < matrix_len - real_k; i += real_k) {
-    for (j = 0; j < k; ++j) {
-      matrix[matrix_index++] = matrix[i + j];
-    }
-  }
+  uint8_t* target[1];
+  target[0] = (uint8_t*)env->GetDirectBufferAddress(target_jba);
 
-  // // write back (only the encode part)
-  // env->SetByteArrayRegion(jba_matrix, 0, k * m, (jbyte*)matrix);
-  // delete[] matrix;
+  // call isa-l to decode
+  ec_encode_data(chunk_size, partial_decode_num, 1, partial_decode_gftbl, data,
+                 target);
 }
-
-// void xor_single(uint8_t* source, uint8_t* target, int chunk_size) {
-//   // for (int j = 0; j < chunk_size; ++j) {
-//   //   target[j] ^= source[j];
-//   // }
-//   ec_encode_data(chunk_size, 2, 1, gftbl, data, output);
-// }
 
 JNIEXPORT void JNICALL Java_NativeCodec_xorIntemediate(JNIEnv* env, jobject obj,
                                                        jobjectArray src_joa,
@@ -246,32 +301,16 @@ JNIEXPORT void JNICALL Java_NativeCodec_xorIntemediate(JNIEnv* env, jobject obj,
   // get the source & target memory space
   int i, j;
   jobject jba[global_num];
-  uint8_t** source = new uint8_t*[global_num];
+  uint8_t* source[global_num];
   for (i = 0; i < global_num; ++i) {
     jba[i] = env->GetObjectArrayElement(src_joa, i);
     source[i] = (uint8_t*)env->GetDirectBufferAddress(jba[i]);
   }
-  uint8_t** target = new uint8_t*[global_num];
+  uint8_t* target[global_num];
   for (i = 0; i < global_num; ++i) {
     jba[i] = env->GetObjectArrayElement(tar_joa, i);
     target[i] = (uint8_t*)env->GetDirectBufferAddress(jba[i]);
   }
-  cout << "--- xor intermediate :";
-  struct timeval start_time, end_time;
-  gettimeofday(&start_time, 0);
-
-  // for (i = 0; i < global_num; ++i) {
-  //   for (j = 0; j < chunk_size; ++j) {
-  //     target[i][j] ^= source[i][j];
-  //   }
-  // }
-  // thread threads[global_num];
-  // for (i = 0; i < global_num; ++i) {
-  //   threads[i] = thread(xor_single, source[i], target[i], chunk_size);
-  // }
-  // for (i = 0; i < global_num; ++i) {
-  //   threads[i].join();
-  // }
 
   uint8_t *data[2], *output[1];
   for (i = 0; i < global_num; ++i) {
@@ -280,29 +319,5 @@ JNIEXPORT void JNICALL Java_NativeCodec_xorIntemediate(JNIEnv* env, jobject obj,
     ec_encode_data(chunk_size, 2, 1, gftbl, data, output);
   }
 
-  // uint8_t *data[global_num][2], *output[global_num][1];
-  // thread threads[global_num];
-  // for (i = 0; i < global_num; ++i) {
-  //   data[i][0] = source[i];
-  //   output[i][0] = data[i][1] = target[i];
-  //   threads[i] = thread([=, &data, &output] {
-  //     ec_encode_data(chunk_size, 2, 1, gftbl, data[i], output[i]);
-  //   });
-  // }
-  // for (i = 0; i < global_num; ++i) {
-  //   threads[i].join();
-  // }
-
-  gettimeofday(&end_time, 0);
-  double time = (end_time.tv_sec - start_time.tv_sec) * 1000.0 +
-                (end_time.tv_usec - start_time.tv_usec) / 1000.0;
-  cout << time << " ---\n";
-
-  // // notify the modification and write back
-  // for (i = 0; i < global_num; ++i) {
-  //   env->ReleaseByteArrayElements(jba[i], (jbyte*)target[i], 0);
-  // }
-  delete[] source;
-  delete[] target;
   flag = true;
 }

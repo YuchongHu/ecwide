@@ -12,16 +12,8 @@ extern "C" {
  * Method:    generateEncodeMatrix
  * Signature: ()V
  */
-JNIEXPORT void JNICALL Java_NativeCodec_generateEncodeMatrix__
+JNIEXPORT void JNICALL Java_NativeCodec_generateEncodeMatrix
   (JNIEnv *, jobject);
-
-/*
- * Class:     NativeCodec
- * Method:    generateEncodeMatrix
- * Signature: (I)V
- */
-JNIEXPORT void JNICALL Java_NativeCodec_generateEncodeMatrix__I
-  (JNIEnv *, jobject, jint);
 
 /*
  * Class:     NativeCodec
@@ -41,6 +33,14 @@ JNIEXPORT void JNICALL Java_NativeCodec_initDecodeTable
 
 /*
  * Class:     NativeCodec
+ * Method:    initPartialDecodeTable
+ * Signature: ()V
+ */
+JNIEXPORT void JNICALL Java_NativeCodec_initPartialDecodeTable
+  (JNIEnv *, jobject);
+
+/*
+ * Class:     NativeCodec
  * Method:    encodeData
  * Signature: ([Ljava/nio/ByteBuffer;[Ljava/nio/ByteBuffer;)V
  */
@@ -53,6 +53,14 @@ JNIEXPORT void JNICALL Java_NativeCodec_encodeData
  * Signature: ([Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;)V
  */
 JNIEXPORT void JNICALL Java_NativeCodec_decodeData
+  (JNIEnv *, jobject, jobjectArray, jobject);
+
+/*
+ * Class:     NativeCodec
+ * Method:    partialDecodeData
+ * Signature: ([Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;)V
+ */
+JNIEXPORT void JNICALL Java_NativeCodec_partialDecodeData
   (JNIEnv *, jobject, jobjectArray, jobject);
 
 /*
